@@ -832,11 +832,6 @@
             <button id="searchBtn">Search</button>
         </div>
 
-        <!-- Temperature Converter Toggle -->
-        <button class="temp-converter-toggle" id="tempConverterToggle">
-            <i class="fas fa-calculator"></i> Temp Converter
-        </button>
-
         <!-- Temperature Converter -->
         <div class="converter-container" id="converterContainer">
             <p class="converter-label">Temperature Converter</p>
@@ -1026,10 +1021,6 @@
         const lastUpdated = document.getElementById("lastUpdated");
         const forecastItems = document.getElementById("forecastItems");
         const overlay = document.getElementById("overlay");
-        const tempConverterToggle = document.getElementById("tempConverterToggle");
-        const converterContainer = document.getElementById("converterContainer");
-        const celsiusInput = document.getElementById("celsiusInput");
-        const fahrenheitInput = document.getElementById("fahrenheitInput");
 
         // Weather Elements
         const location_elem = document.getElementById("location");
@@ -1061,7 +1052,7 @@
         let updateInterval = null;
         let refreshCountdown = null;
         let countdown = 60;
-
+        let isAutoRefreshActive = false;
 
         // AQI descriptions
         const aqiDescriptions = {
@@ -1081,11 +1072,6 @@
         });
         modeToggle.addEventListener("click", toggleDarkMode);
         toggleTempUnit.addEventListener("click", toggleTemperatureUnit);
-        tempConverterToggle.addEventListener("click", toggleTempConverter);
-
-        // Temperature converter events
-        celsiusInput.addEventListener("input", convertCtoF);
-        fahrenheitInput.addEventListener("input", convertFtoC);
 
         // Check for saved dark mode preference
         if (localStorage.getItem("darkMode") === "enabled") {
@@ -1128,46 +1114,6 @@
             }, 1000);
         }
 
-        // Toggle temperature converter panel
-        function toggleTempConverter() {
-            converterContainer.classList.toggle("show-converter");
-
-            if (converterContainer.classList.contains("show-converter")) {
-                tempConverterToggle.innerHTML = '<i class="fas fa-calculator"></i> Hide Converter';
-            } else {
-                tempConverterToggle.innerHTML = '<i class="fas fa-calculator"></i> Temp Converter';
-            }
-
-            // Add slide animation
-            converterContainer.classList.add("converter-animation");
-            setTimeout(() => {
-                converterContainer.classList.remove("converter-animation");
-            }, 500);
-        }
-
-        // Temperature conversion functions
-        function convertCtoF() {
-            if (celsiusInput.value === "") {
-                fahrenheitInput.value = "";
-                return;
-            }
-
-            const celsius = parseFloat(celsiusInput.value);
-            const fahrenheit = (celsius * 9 / 5) + 32;
-            fahrenheitInput.value = fahrenheit.toFixed(1);
-        }
-
-        function convertFtoC() {
-            if (fahrenheitInput.value === "") {
-                celsiusInput.value = "";
-                return;
-            }
-
-            const fahrenheit = parseFloat(fahrenheitInput.value);
-            const celsius = (fahrenheit - 32) * 5 / 9;
-            celsiusInput.value = celsius.toFixed(1);
-        }
-
         // Toggle temperature unit (Celsius/Fahrenheit)
         function toggleTemperatureUnit() {
             if (currentTempUnit === "metric") {
@@ -1180,8 +1126,12 @@
 
             localStorage.setItem("tempUnit", currentTempUnit);
 
+            // Re-fetch weather data with new units instead of converting existing data
             if (currentWeatherData) {
-                displayWeather(currentWeatherData);
+                const city = cityInput.value.trim();
+                if (city) {
+                    getWeather();
+                }
             }
 
             // Add animation for unit change
@@ -1223,7 +1173,7 @@
                 displayForecast(forecastData);
                 displayAirQuality(aqiData);
 
-                // Set up auto-refresh
+                // Set up auto-refresh with better mobile support
                 setupAutoRefresh(data.coord.lat, data.coord.lon, city);
 
                 // Set background based on weather
@@ -1339,32 +1289,93 @@
             return await response.json();
         }
 
-        // Setup auto-refresh for weather data
+        // Setup auto-refresh for weather data with improved mobile support
         function setupAutoRefresh(lat, lon, city) {
             // Clear existing intervals
             if (updateInterval) clearInterval(updateInterval);
             if (refreshCountdown) clearInterval(refreshCountdown);
 
+            // Mark auto-refresh as active
+            isAutoRefreshActive = true;
+
             // Set up refresh countdown
             countdown = 60;
-            refreshTimer.textContent = countdown;
-
-            refreshCountdown = setInterval(() => {
-                countdown--;
+            if (refreshTimer) {
                 refreshTimer.textContent = countdown;
+            }
+
+            // More efficient countdown that checks for page visibility
+            refreshCountdown = setInterval(() => {
+                // Check if page is visible (mobile optimization)
+                if (document.hidden || !isAutoRefreshActive) {
+                    return;
+                }
+
+                countdown--;
+                if (refreshTimer) {
+                    refreshTimer.textContent = countdown;
+                }
 
                 if (countdown <= 0) {
                     countdown = 60;
-                    refreshTimer.textContent = countdown;
+                    if (refreshTimer) {
+                        refreshTimer.textContent = countdown;
+                    }
                     refreshWeatherData(lat, lon, city);
                 }
             }, 1000);
 
             // Set up auto-refresh every 10 minutes (600000 ms)
-            updateInterval = setInterval(() => {
-                refreshWeatherData(lat, lon, city);
-            }, 600000);
+            // Use setTimeout instead of setInterval for better mobile performance
+            const scheduleNextUpdate = () => {
+                if (updateInterval) clearTimeout(updateInterval);
+
+                updateInterval = setTimeout(() => {
+                    if (!document.hidden && isAutoRefreshActive) {
+                        refreshWeatherData(lat, lon, city);
+                        scheduleNextUpdate(); // Schedule next update
+                    }
+                }, 600000); // 10 minutes
+            };
+
+            scheduleNextUpdate();
         }
+
+        // Handle page visibility changes for mobile optimization
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Page is hidden, pause auto-refresh
+                if (refreshCountdown) {
+                    clearInterval(refreshCountdown);
+                }
+            } else {
+                // Page is visible again, resume auto-refresh if it was active
+                if (isAutoRefreshActive && currentWeatherData) {
+                    const city = cityInput.value.trim();
+                    if (city) {
+                        // Resume countdown
+                        refreshCountdown = setInterval(() => {
+                            if (document.hidden || !isAutoRefreshActive) {
+                                return;
+                            }
+
+                            countdown--;
+                            if (refreshTimer) {
+                                refreshTimer.textContent = countdown;
+                            }
+
+                            if (countdown <= 0) {
+                                countdown = 60;
+                                if (refreshTimer) {
+                                    refreshTimer.textContent = countdown;
+                                }
+                                refreshWeatherData(currentWeatherData.coord.lat, currentWeatherData.coord.lon, city);
+                            }
+                        }, 1000);
+                    }
+                }
+            }
+        });
 
         // Refresh weather data
         async function refreshWeatherData(lat, lon, city) {
@@ -1392,8 +1403,14 @@
                 displayAirQuality(aqiData);
 
                 // Update last updated text
-                lastUpdated.innerHTML = `Last updated: Just now • Auto-refreshes in <span id="refreshTimer">60</span>s`;
-                refreshTimer.textContent = countdown;
+                if (lastUpdated && refreshTimer) {
+                    lastUpdated.innerHTML = `Last updated: Just now • Auto-refreshes in <span id="refreshTimer">${countdown}</span>s`;
+                    // Re-get the refreshTimer element after innerHTML update
+                    const newRefreshTimer = document.getElementById("refreshTimer");
+                    if (newRefreshTimer) {
+                        newRefreshTimer.textContent = countdown;
+                    }
+                }
 
                 // Set background based on weather
                 setWeatherBackground(data.weather[0].icon);
@@ -1646,10 +1663,17 @@
         // Initial date and time update
         updateDateTime();
 
-        // Try to get weather for user's location on page load
+        // Try to get weather for user's location on page load with better mobile support
         window.addEventListener('load', () => {
             // Check if geolocation is available
             if (navigator.geolocation) {
+                // Use better options for mobile devices
+                const options = {
+                    enableHighAccuracy: false, // Don't use GPS for faster response
+                    timeout: 10000, // 10 second timeout
+                    maximumAge: 300000 // Accept cached position up to 5 minutes old
+                };
+
                 navigator.geolocation.getCurrentPosition(
                     // Success callback
                     async (position) => {
@@ -1684,9 +1708,17 @@
                     // Error callback
                     (error) => {
                         console.error("Geolocation error:", error);
-                    }
+                    },
+                    options
                 );
             }
+        });
+
+        // Clean up intervals when page is about to unload
+        window.addEventListener('beforeunload', () => {
+            isAutoRefreshActive = false;
+            if (updateInterval) clearTimeout(updateInterval);
+            if (refreshCountdown) clearInterval(refreshCountdown);
         });
 
         // Update time every minute
